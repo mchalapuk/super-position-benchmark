@@ -1,0 +1,16 @@
+group = 'pl.chalapuk.morejuice'
+version = '0.1'
+
+description = 'Benchmark of SuperPosition utility (state sharing without resource locking in Java).'
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '3.3'
+}
+
