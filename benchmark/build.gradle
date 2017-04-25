@@ -1,0 +1,14 @@
+apply plugin: 'java'
+
+repositories {
+    jcenter()
+}
+
+sourceCompatibility = 1.8
+
+dependencies {
+    compile project(':super-position')
+
+    compile 'com.google.caliper:caliper:1.0-beta-2'
+}
+

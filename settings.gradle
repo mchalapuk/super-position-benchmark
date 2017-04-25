@@ -1,4 +1,5 @@
 rootProject.name = 'super-position-benchmark'
 
 include 'super-position'
+include 'benchmark'
 
