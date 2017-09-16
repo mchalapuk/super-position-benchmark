@@ -3,6 +3,7 @@ package pl.chalapuk.morejuice;
 import com.google.caliper.BeforeExperiment;
 import com.google.caliper.Benchmark;
 import com.google.caliper.Param;
+import com.google.caliper.api.VmOptions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 import morejuice.SuperPosition;
@@ -17,14 +18,18 @@ import java.util.List;
  * @author Maciej Chałapuk &lt;maciej@chalapuk.pl&gt;
  */
 @SuppressWarnings("unused")
+@VmOptions("-XX:-TieredCompilation")
 public class BlockChainBenchmark {
     private static long mark = 0;
 
-    @Param({"10", "50"})
+    @Param({"10"})
     public int blockSize;
 
-    @Param({"10", "50"})
+    @Param({"10"})
     public int chainLength;
+
+    @Param
+    public Implementation impl;
 
     private Iterator<Transaction.Builder> transactionStream;
 
@@ -34,7 +39,7 @@ public class BlockChainBenchmark {
             System.out.println(" "+ (System.currentTimeMillis() - mark) / 1000 + " sec ");
         }
 
-        System.out.print("blockSize="+ blockSize +" chainLength="+ chainLength);
+        System.out.print("blockSize="+ blockSize +" chainLength="+ chainLength +" impl="+ impl.name());
 
         System.out.print(" generating keys...");
         mark = System.currentTimeMillis();
@@ -46,102 +51,149 @@ public class BlockChainBenchmark {
         transactionStream = Iterators.cycle(generateTransactions(keys, 10000000));
         System.out.print(" "+ (System.currentTimeMillis() - mark) / 1000 + " sec ");
 
+        impl.init(chainLength, blockSize, transactionStream);
+
         System.out.print(" running benchmark...");
         mark = System.currentTimeMillis();
     }
 
     @Benchmark
-    public void singleThread() {
-        final BlockChain chain = new BlockChain();
-        Block.Builder pendingBlock = new Block.Builder();
+    public Object benchmark(final int n) throws Exception {
+        Object last = null;
 
-        final Transaction first = new Transaction(null, new byte[] {}, null);
-        Transaction previous = transactionStream.next().sign(first);
-        pendingBlock.add(previous);
-
-        while (chain.length() != chainLength) {
-            while (pendingBlock.size() != blockSize) {
-                final Transaction next = transactionStream.next().sign(previous);
-                pendingBlock.add(next);
-                previous = next;
-            }
-
-            chain.add(pendingBlock);
-            chain.verifyLastBlock();
-
-            pendingBlock = new Block.Builder();
+        for (int  i = 0; i < n; ++i) {
+            last = impl.run(chainLength, blockSize, transactionStream);
         }
+        return last;
     }
 
-    @Benchmark
-    public void superPosition() throws InterruptedException {
-        final SuperPosition<BlockChain> theShit = new SuperPosition<>();
-        theShit.initialize(BlockChain::new);
-
-        final Thread signer = new Thread(new Runnable() {
-            private final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
-            private boolean running = true;
-
-            private Block.Builder newBlock = new Block.Builder();
-            private Block.Builder pendingBlock;
-            private Transaction previous;
-
+    public enum Implementation {
+        SINGLE_THREAD {
             @Override
-            public void run() {
+            public void init(final int chainLength,
+                             final int blockSize,
+                             final Iterator<Transaction.Builder> transactionStream) {
+            }
+            @Override
+            public Object run(final int chainLength,
+                              final int blockSize,
+                              final Iterator<Transaction.Builder> transactionStream) {
+                final BlockChain chain = new BlockChain();
+                Block.Builder pendingBlock = new Block.Builder();
+
                 final Transaction first = new Transaction(null, new byte[] {}, null);
-                previous = transactionStream.next().sign(first);
-                newBlock.add(previous);
+                Transaction previous = transactionStream.next().sign(first);
+                pendingBlock.add(previous);
 
-                while (running) {
-                    mover.read((chain) -> {
-                        while (newBlock.size() != blockSize) {
-                            final Transaction next = transactionStream.next().sign(previous);
-                            newBlock.add(next);
-                            previous = next;
-                        }
+                while (chain.length() != chainLength) {
+                    while (pendingBlock.size() != blockSize) {
+                        final Transaction next = transactionStream.next().sign(previous);
+                        pendingBlock.add(next);
+                        previous = next;
+                    }
 
-                        pendingBlock = newBlock;
-                        newBlock = new Block.Builder();
-                    });
-
-                    mover.move((chain) -> {
-                        chain.add(pendingBlock);
-
-                        if (chain.length() + 1 == chainLength) {
-                            running = false;
-                        }
-                    });
-                }
-            }
-        });
-
-        final Thread verifier = new Thread(new Runnable()  {
-            private final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
-            private boolean running = true;
-
-            @Override
-            public void run() {
-                while (running && !verify()) {
-                    sleep(10);
-                }
-            }
-
-            private boolean verify() {
-                return reader.read((chain) -> {
+                    chain.add(pendingBlock);
                     chain.verifyLastBlock();
 
-                    if (chain.length() == chainLength) {
-                        running = false;
+                    pendingBlock = new Block.Builder();
+                }
+
+                return chain;
+            }
+        },
+
+        SUPER_POSITION {
+            private Thread verifier;private Thread signer;
+
+            @Override
+            public void init(final int chainLength,
+                             final int blockSize,
+                             final Iterator<Transaction.Builder> transactionStream) {
+                final SuperPosition<BlockChain> theShit = new SuperPosition<>();
+                theShit.initialize(BlockChain::new);
+
+                signer = new Thread(new Runnable() {
+                    private final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
+                    private boolean running = true;
+
+                    private Block.Builder newBlock = new Block.Builder();
+                    private Block.Builder pendingBlock;
+                    private Transaction previous;
+
+                    @Override
+                    public void run() {
+                        final Transaction first = new Transaction(null, new byte[] {}, null);
+                        previous = transactionStream.next().sign(first);
+                        newBlock.add(previous);
+
+                        while (running) {
+                            mover.read((chain) -> {
+                                while (newBlock.size() != blockSize) {
+                                    final Transaction next = transactionStream.next().sign(previous);
+                                    newBlock.add(next);
+                                    previous = next;
+                                }
+
+                                pendingBlock = newBlock;
+                                newBlock = new Block.Builder();
+                            });
+
+                            mover.move((chain) -> {
+                                chain.add(pendingBlock);
+
+                                if (chain.length() + 1 == chainLength) {
+                                    running = false;
+                                }
+                            });
+                        }
+                    }
+                });
+
+                verifier = new Thread(new Runnable()  {
+                    private final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
+                    private boolean running = true;
+
+                    @Override
+                    public void run() {
+                        while (running && !verify()) {
+                            sleep(10);
+                        }
+                    }
+
+                    private boolean verify() {
+                        return reader.read((chain) -> {
+                            chain.verifyLastBlock();
+
+                            if (chain.length() == chainLength) {
+                                running = false;
+                            }
+                        });
                     }
                 });
             }
-        });
 
-        signer.start();
-        verifier.start();
+            @Override
+            public Object run(final int chainLength,
+                              final int blockSize,
+                              final Iterator<Transaction.Builder> transactionStream) throws Exception {
 
-        signer.join();
-        verifier.join();
+                signer.start();
+                verifier.start();
+
+                signer.join();
+                verifier.join();
+
+                return signer;
+            }
+        };
+
+        public abstract void init(final int chainLength,
+                                  final int blockSize,
+                                  final Iterator<Transaction.Builder> transactionStream);
+
+        public abstract Object run(final int chainLength,
+                                   final int blockSize,
+                                   final Iterator<Transaction.Builder> transactionStream) throws Exception;
     }
 
     private static class BlockChain {
@@ -182,14 +234,14 @@ public class BlockChainBenchmark {
             }
 
             public Block hash(final byte[] previousDigest) {
-                SHA_256.reset();
-                SHA_256.update(previousDigest);
+                SHA_256_WRITE.reset();
+                SHA_256_WRITE.update(previousDigest);
 
                 for (final Transaction t : transactions) {
-                    SHA_256.update(t.digest);
-                    SHA_256.update(t.signature);
+                    SHA_256_WRITE.update(t.digest);
+                    SHA_256_WRITE.update(t.signature);
                 }
-                return new Block(transactions, SHA_256.digest());
+                return new Block(transactions, SHA_256_WRITE.digest());
             }
         }
 
@@ -222,7 +274,7 @@ public class BlockChainBenchmark {
             }
 
             public Transaction sign(final Transaction previous) {
-                final byte[] digest = hash(previous.digest, source);
+                final byte[] digest = hash(SHA_256_WRITE, previous.digest, source);
                 final byte[] signature = sign(digest);
                 return new Transaction(source, digest, signature);
             }
@@ -258,7 +310,7 @@ public class BlockChainBenchmark {
         }
 
         private boolean verifyDigest(byte[] previousDigest) {
-            return Arrays.equals(digest, hash(previousDigest, source));
+            return Arrays.equals(digest, hash(SHA_256_READ, previousDigest, source));
         }
 
         private boolean verifySignature() {
@@ -272,11 +324,11 @@ public class BlockChainBenchmark {
         }
     }
     
-    private static byte[] hash(final byte[] previousDigest, final KeyPair source) {
-        SHA_256.reset();
-        SHA_256.update(previousDigest);
-        SHA_256.update(source.getPublic().getEncoded());
-        return SHA_256.digest();
+    private static byte[] hash(final MessageDigest digest, final byte[] previousDigest, final KeyPair source) {
+        digest.reset();
+        digest.update(previousDigest);
+        digest.update(source.getPublic().getEncoded());
+        return digest.digest();
     }
 
     private static List<KeyPair> generateKeys(final int n) {
@@ -301,13 +353,15 @@ public class BlockChainBenchmark {
         return keys.get((int) Math.round(Math.random() * (keys.size() - 1)));
     }
 
-    private static final MessageDigest SHA_256;
+    private static final MessageDigest SHA_256_WRITE;
+    private static final MessageDigest SHA_256_READ;
     private static final KeyPairGenerator KEYGEN;
     private static final Signature SIGNATURE;
 
     static {
         try {
-            SHA_256 = MessageDigest.getInstance("SHA-256");
+            SHA_256_WRITE = MessageDigest.getInstance("SHA-256");
+            SHA_256_READ = MessageDigest.getInstance("SHA-256");
             KEYGEN = KeyPairGenerator.getInstance("RSA");
             KEYGEN.initialize(2048);
             SIGNATURE = Signature.getInstance("SHA256WithRSA");
