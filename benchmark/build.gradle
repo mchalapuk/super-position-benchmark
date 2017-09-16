@@ -12,3 +12,9 @@ dependencies {
     compile 'com.google.caliper:caliper:1.0-beta-2'
 }
 
+task run(type:JavaExec, dependsOn: classes) {
+    main = 'com.google.caliper.runner.CaliperMain'
+    args([ 'pl.chalapuk.morejuice.BlockChainBenchmark' ])
+    classpath = sourceSets.main.runtimeClasspath
+}
+
