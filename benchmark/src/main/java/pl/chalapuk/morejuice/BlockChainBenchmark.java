@@ -102,23 +102,17 @@ public class BlockChainBenchmark {
                               final int blockSize,
                               final Iterator<Transaction.Builder> transactionStream) {
                 final BlockChain chain = new BlockChain();
-                Block.Builder pendingBlock = new Block.Builder();
-
-                final Transaction first = new Transaction(null, new byte[] {}, null);
-                Transaction previous = transactionStream.next().sign(first);
-                pendingBlock.add(previous);
+                Block.Builder pendingBlock = new Block.Builder(new byte[] {});
 
                 while (chain.length() != chainLength) {
                     while (pendingBlock.size() != blockSize) {
-                        final Transaction next = transactionStream.next().sign(previous);
-                        pendingBlock.add(next);
-                        previous = next;
+                        pendingBlock.add(transactionStream.next());
                     }
 
                     chain.add(pendingBlock);
                     chain.verifyLastBlock();
 
-                    pendingBlock = new Block.Builder();
+                    pendingBlock = new Block.Builder(pendingBlock.getLastDigest());
                 }
 
                 return chain;
@@ -138,26 +132,19 @@ public class BlockChainBenchmark {
                     private final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
                     private boolean running = true;
 
-                    private Block.Builder newBlock = new Block.Builder();
+                    private Block.Builder newBlock = new Block.Builder(new byte[] {});
                     private Block.Builder pendingBlock;
-                    private Transaction previous;
 
                     @Override
                     public void run() {
-                        final Transaction first = new Transaction(null, new byte[] {}, null);
-                        previous = transactionStream.next().sign(first);
-                        newBlock.add(previous);
-
                         while (running) {
                             mover.read((chain) -> {
                                 while (newBlock.size() != blockSize) {
-                                    final Transaction next = transactionStream.next().sign(previous);
-                                    newBlock.add(next);
-                                    previous = next;
+                                    newBlock.add(transactionStream.next());
                                 }
 
                                 pendingBlock = newBlock;
-                                newBlock = new Block.Builder();
+                                newBlock = new Block.Builder(pendingBlock.getLastDigest());
                             });
 
                             mover.move((chain) -> {
@@ -197,6 +184,7 @@ public class BlockChainBenchmark {
 
                 while (signerRunnable != null && verifierRunnable != null) {
                     count += 1;
+                    sleep(10);
                 }
                 return count;
             }
@@ -212,8 +200,7 @@ public class BlockChainBenchmark {
         private List<byte[]> hashes = new ArrayList<>();
 
         public void add(final Block.Builder pendingBlock) {
-            final byte[] previousDigest = blocks.size() == 0 ? new byte[] {} : blocks.get(blocks.size() - 1).digest;
-            blocks.add(pendingBlock.hash(previousDigest));
+            blocks.add(pendingBlock.build());
         }
 
         public int length() {
@@ -225,54 +212,48 @@ public class BlockChainBenchmark {
                 throw new IllegalStateException("zero blocks in the chain");
             }
 
-            final byte[] previousDigest = blocks.size() == 1
-                    ? new byte[] {}
-                    : blocks.get(blocks.size() - 2).getLastTransaction().digest;
-            blocks.get(length() - 1).verify(previousDigest);
+            blocks.get(length() - 1).verify();
         }
     }
 
     private static class Block {
         public static class Builder {
+            private byte[] previousDigest;
             private List<Transaction> transactions = new ArrayList<>();
 
-            public void add(final Transaction transaction) {
-                transactions.add(transaction);
+            public Builder(final byte[] previousDigest) {
+                this.previousDigest = previousDigest;
+            }
+
+            public void add(final Transaction.Builder transaction) {
+                transactions.add(transaction.sign(getLastDigest()));
             }
 
             public int size() {
                 return transactions.size();
             }
 
-            public Block hash(final byte[] previousDigest) {
-                SHA_256_WRITE.reset();
-                SHA_256_WRITE.update(previousDigest);
+            public Block build() {
+                return new Block(previousDigest, transactions);
+            }
 
-                for (final Transaction t : transactions) {
-                    SHA_256_WRITE.update(t.digest);
-                    SHA_256_WRITE.update(t.signature);
-                }
-                return new Block(transactions, SHA_256_WRITE.digest());
+            public byte[] getLastDigest() {
+                return transactions.size() == 0 ? previousDigest : transactions.get(transactions.size() - 1).digest;
             }
         }
 
+        private final byte[] previousDigest;
         private final List<Transaction> transactions;
-        private final byte[] digest;
 
-        public Block(final List<Transaction> transactions, final byte[] digest) {
+        public Block(final byte[] previousDigest, final List<Transaction> transactions) {
+            this.previousDigest = previousDigest;
             this.transactions = transactions;
-            this.digest = digest;
         }
 
-        public void verify(byte[] previousDigest) {
-            for (Transaction t : transactions) {
-                t.verify(previousDigest);
-                previousDigest = t.digest;
+        public void verify() {
+            for (final Transaction t : transactions) {
+                t.verify();
             }
-        }
-
-        public Transaction getLastTransaction() {
-            return transactions.get(transactions.size() - 1);
         }
     }
 
@@ -284,17 +265,13 @@ public class BlockChainBenchmark {
                 this.source = source;
             }
 
-            public Transaction sign(final Transaction previous) {
-                final byte[] digest = hash(SHA_256_WRITE, previous.digest, source);
-                final byte[] signature = sign(digest);
-                return new Transaction(source, digest, signature);
-            }
+            public Transaction sign(final byte[] previousDigest) {
+                final byte[] digest = hash(SHA_256_WRITE, previousDigest, source);
 
-            private byte[] sign(final byte[] digest) {
                 try {
                     SIGNATURE_WRITE.initSign(source.getPrivate());
                     SIGNATURE_WRITE.update(digest);
-                    return SIGNATURE_WRITE.sign();
+                    return new Transaction(source, previousDigest, digest, SIGNATURE_WRITE.sign());
                 } catch (final InvalidKeyException | SignatureException e) {
                     throw new Error(e);
                 }
@@ -302,33 +279,37 @@ public class BlockChainBenchmark {
         }
 
         private final KeyPair source;
+        private final byte[] previousDigest;
         private final byte[] digest;
         private final byte[] signature;
 
-        public Transaction(final KeyPair source, final byte[] digest, final byte[] signature) {
+        public Transaction(final KeyPair source, final byte[] previousDigest, final byte[] digest, final byte[] signature) {
             this.source = source;
             this.digest = digest;
+            this.previousDigest = previousDigest;
             this.signature = signature;
         }
 
-        public void verify(final byte[] previousDigest) {
-            if (!verifyDigest(previousDigest)) {
-                throw new RuntimeException("transaction digest verification failed");
-            }
-            if (!verifySignature()) {
-                throw new RuntimeException("transaction signature verification failed");
+        public void verify() {
+            verifyDigest();
+            verifySignature();
+        }
+
+        private void verifyDigest() {
+            final byte[] calculated = hash(SHA_256_READ, previousDigest, source);
+            if (!Arrays.equals(digest, calculated)) {
+                throw new RuntimeException("transaction digest verification failed\nstored: "+
+                    Arrays.toString(digest) +"\ncalculated: "+ Arrays.toString(calculated) +"\n");
             }
         }
 
-        private boolean verifyDigest(byte[] previousDigest) {
-            return Arrays.equals(digest, hash(SHA_256_READ, previousDigest, source));
-        }
-
-        private boolean verifySignature() {
+        private void verifySignature() {
             try {
                 SIGNATURE_READ.initVerify(source.getPublic());
-                SIGNATURE_READ.update(this.digest);
-                return SIGNATURE_READ.verify(signature);
+                SIGNATURE_READ.update(digest);
+                if (!SIGNATURE_READ.verify(signature)) {
+                    throw new RuntimeException("transaction signature verification failed");
+                }
             } catch (final InvalidKeyException | SignatureException e) {
                 throw new Error(e);
             }
@@ -387,7 +368,7 @@ public class BlockChainBenchmark {
         try {
             Thread.sleep(10);
         } catch (final InterruptedException e) {
-            throw new Error(e);
+            Thread.currentThread().interrupt();
         }
     }
 }
