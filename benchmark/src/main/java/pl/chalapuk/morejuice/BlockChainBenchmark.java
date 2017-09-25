@@ -1,14 +1,21 @@
 package pl.chalapuk.morejuice;
 
+import com.google.caliper.AfterExperiment;
 import com.google.caliper.BeforeExperiment;
-import com.google.caliper.Benchmark;
 import com.google.caliper.Param;
+import com.google.caliper.api.Macrobenchmark;
 import com.google.caliper.api.VmOptions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 import morejuice.SuperPosition;
 
-import java.security.*;
+import java.security.InvalidKeyException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.Signature;
+import java.security.SignatureException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -17,7 +24,7 @@ import java.util.List;
 /**
  * @author Maciej Chałapuk &lt;maciej@chalapuk.pl&gt;
  */
-@SuppressWarnings("unused")
+@SuppressWarnings({"unused", "SameParameterValue"})
 @VmOptions("-XX:-TieredCompilation")
 public class BlockChainBenchmark {
     private static long mark = 0;
@@ -51,13 +58,16 @@ public class BlockChainBenchmark {
         transactionStream = Iterators.cycle(generateTransactions(keys, 10000000));
         System.out.print(" "+ (System.currentTimeMillis() - mark) / 1000 + " sec ");
 
-        impl.init(chainLength, blockSize, transactionStream);
-
         System.out.print(" running benchmark...");
         mark = System.currentTimeMillis();
     }
 
-    @Benchmark
+    @AfterExperiment
+    public void tearDown() throws Exception {
+
+    }
+
+    @Macrobenchmark
     public Object benchmark(final int n) throws Exception {
         Object last = null;
 
@@ -69,11 +79,7 @@ public class BlockChainBenchmark {
 
     public enum Implementation {
         SINGLE_THREAD {
-            @Override
-            public void init(final int chainLength,
-                             final int blockSize,
-                             final Iterator<Transaction.Builder> transactionStream) {
-            }
+
             @Override
             public Object run(final int chainLength,
                               final int blockSize,
@@ -103,16 +109,15 @@ public class BlockChainBenchmark {
         },
 
         SUPER_POSITION {
-            private Thread verifier;private Thread signer;
 
             @Override
-            public void init(final int chainLength,
-                             final int blockSize,
-                             final Iterator<Transaction.Builder> transactionStream) {
+            public Object run(final int chainLength,
+                              final int blockSize,
+                              final Iterator<Transaction.Builder> transactionStream) throws Exception {
                 final SuperPosition<BlockChain> theShit = new SuperPosition<>();
                 theShit.initialize(BlockChain::new);
 
-                signer = new Thread(new Runnable() {
+                final Thread signer = new Thread(new Runnable() {
                     private final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
                     private boolean running = true;
 
@@ -149,7 +154,7 @@ public class BlockChainBenchmark {
                     }
                 });
 
-                verifier = new Thread(new Runnable()  {
+                final Thread verifier = new Thread(new Runnable() {
                     private final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
                     private boolean running = true;
 
@@ -170,12 +175,6 @@ public class BlockChainBenchmark {
                         });
                     }
                 });
-            }
-
-            @Override
-            public Object run(final int chainLength,
-                              final int blockSize,
-                              final Iterator<Transaction.Builder> transactionStream) throws Exception {
 
                 signer.start();
                 verifier.start();
@@ -186,10 +185,6 @@ public class BlockChainBenchmark {
                 return signer;
             }
         };
-
-        public abstract void init(final int chainLength,
-                                  final int blockSize,
-                                  final Iterator<Transaction.Builder> transactionStream);
 
         public abstract Object run(final int chainLength,
                                    final int blockSize,
