@@ -27,44 +27,61 @@ import java.util.List;
 @SuppressWarnings({"unused", "SameParameterValue"})
 @VmOptions("-XX:-TieredCompilation")
 public class BlockChainBenchmark {
-    private static long mark = 0;
 
-    @Param({"10"})
+    @Param({"10", "20", "30", "40", "50"})
     public int blockSize;
-
-    @Param({"10"})
+    @Param({"10", "50", "100"})
     public int chainLength;
-
     @Param
     public Implementation impl;
 
     private Iterator<Transaction.Builder> transactionStream;
 
+    private static volatile Runnable signerRunnable;
+    private static volatile Runnable verifierRunnable;
+
+    private Thread signer;
+    private Thread verifier;
+
     @BeforeExperiment
     public void setUp() throws Exception {
-        if (mark != 0) {
-            System.out.println(" "+ (System.currentTimeMillis() - mark) / 1000 + " sec ");
-        }
-
-        System.out.print("blockSize="+ blockSize +" chainLength="+ chainLength +" impl="+ impl.name());
-
-        System.out.print(" generating keys...");
-        mark = System.currentTimeMillis();
         final List<KeyPair> keys = generateKeys(10);
-        System.out.print(" "+ (System.currentTimeMillis() - mark) / 1000 + " sec ");
-
-        System.out.print(" generating transactions...");
-        mark = System.currentTimeMillis();
         transactionStream = Iterators.cycle(generateTransactions(keys, 10000000));
-        System.out.print(" "+ (System.currentTimeMillis() - mark) / 1000 + " sec ");
 
-        System.out.print(" running benchmark...");
-        mark = System.currentTimeMillis();
+        signer = new Thread() {
+            public void run() {
+                while (true) {
+                    while (signerRunnable == null) {
+                        if (this.isInterrupted()) {
+                            return;
+                        }
+                    }
+                    signerRunnable.run();
+                    signerRunnable = null;
+                }
+            }
+        };
+
+        verifier = new Thread() {
+            public void run() {
+                while (verifierRunnable == null) {
+                    if (this.isInterrupted()) {
+                        return;
+                    }
+                }
+                verifierRunnable.run();
+                verifierRunnable = null;
+            }
+        };
+
+        signer.start();
+        verifier.start();
     }
 
     @AfterExperiment
     public void tearDown() throws Exception {
-
+        signer.interrupt();
+        verifier.interrupt();
     }
 
     @Macrobenchmark
@@ -117,7 +134,7 @@ public class BlockChainBenchmark {
                 final SuperPosition<BlockChain> theShit = new SuperPosition<>();
                 theShit.initialize(BlockChain::new);
 
-                final Thread signer = new Thread(new Runnable() {
+                signerRunnable = new Runnable() {
                     private final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
                     private boolean running = true;
 
@@ -152,9 +169,9 @@ public class BlockChainBenchmark {
                             });
                         }
                     }
-                });
+                };
 
-                final Thread verifier = new Thread(new Runnable() {
+                verifierRunnable = new Runnable() {
                     private final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
                     private boolean running = true;
 
@@ -174,15 +191,14 @@ public class BlockChainBenchmark {
                             }
                         });
                     }
-                });
+                };
 
-                signer.start();
-                verifier.start();
+                int count = 0;
 
-                signer.join();
-                verifier.join();
-
-                return signer;
+                while (signerRunnable != null && verifierRunnable != null) {
+                    count += 1;
+                }
+                return count;
             }
         };
 
@@ -276,9 +292,9 @@ public class BlockChainBenchmark {
 
             private byte[] sign(final byte[] digest) {
                 try {
-                    SIGNATURE.initSign(source.getPrivate());
-                    SIGNATURE.update(digest);
-                    return SIGNATURE.sign();
+                    SIGNATURE_WRITE.initSign(source.getPrivate());
+                    SIGNATURE_WRITE.update(digest);
+                    return SIGNATURE_WRITE.sign();
                 } catch (final InvalidKeyException | SignatureException e) {
                     throw new Error(e);
                 }
@@ -310,9 +326,9 @@ public class BlockChainBenchmark {
 
         private boolean verifySignature() {
             try {
-                SIGNATURE.initVerify(source.getPublic());
-                SIGNATURE.update(this.digest);
-                return SIGNATURE.verify(signature);
+                SIGNATURE_READ.initVerify(source.getPublic());
+                SIGNATURE_READ.update(this.digest);
+                return SIGNATURE_READ.verify(signature);
             } catch (final InvalidKeyException | SignatureException e) {
                 throw new Error(e);
             }
@@ -351,7 +367,8 @@ public class BlockChainBenchmark {
     private static final MessageDigest SHA_256_WRITE;
     private static final MessageDigest SHA_256_READ;
     private static final KeyPairGenerator KEYGEN;
-    private static final Signature SIGNATURE;
+    private static final Signature SIGNATURE_WRITE;
+    private static final Signature SIGNATURE_READ;
 
     static {
         try {
@@ -359,7 +376,8 @@ public class BlockChainBenchmark {
             SHA_256_READ = MessageDigest.getInstance("SHA-256");
             KEYGEN = KeyPairGenerator.getInstance("RSA");
             KEYGEN.initialize(2048);
-            SIGNATURE = Signature.getInstance("SHA256WithRSA");
+            SIGNATURE_WRITE = Signature.getInstance("SHA256WithRSA");
+            SIGNATURE_READ = Signature.getInstance("SHA256WithRSA");
         } catch (final NoSuchAlgorithmException e) {
             throw new Error(e);
         }
