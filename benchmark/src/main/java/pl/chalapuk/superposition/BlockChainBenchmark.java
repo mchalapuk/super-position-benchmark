@@ -7,16 +7,13 @@ import com.google.caliper.api.Macrobenchmark;
 import com.google.caliper.api.VmOptions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
+import pl.chalapuk.superposition.blockchain.Block;
+import pl.chalapuk.superposition.blockchain.BlockChain;
+import pl.chalapuk.superposition.blockchain.Transaction;
 
-import java.security.InvalidKeyException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.Signature;
-import java.security.SignatureException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
@@ -194,134 +191,6 @@ public class BlockChainBenchmark {
                                    final Iterator<Transaction.Builder> transactionStream) throws Exception;
     }
 
-    private static class BlockChain {
-        private List<Block> blocks = new ArrayList<>();
-        private List<byte[]> hashes = new ArrayList<>();
-
-        public void add(final Block.Builder pendingBlock) {
-            blocks.add(pendingBlock.build());
-        }
-
-        public int length() {
-            return blocks.size();
-        }
-
-        public void verifyLastBlock() {
-            if (blocks.size() == 0) {
-                throw new IllegalStateException("zero blocks in the chain");
-            }
-
-            blocks.get(length() - 1).verify();
-        }
-    }
-
-    private static class Block {
-        public static class Builder {
-            private byte[] previousDigest;
-            private List<Transaction> transactions = new ArrayList<>();
-
-            public Builder(final byte[] previousDigest) {
-                this.previousDigest = previousDigest;
-            }
-
-            public void add(final Transaction.Builder transaction) {
-                transactions.add(transaction.sign(getLastDigest()));
-            }
-
-            public int size() {
-                return transactions.size();
-            }
-
-            public Block build() {
-                return new Block(previousDigest, transactions);
-            }
-
-            public byte[] getLastDigest() {
-                return transactions.size() == 0 ? previousDigest : transactions.get(transactions.size() - 1).digest;
-            }
-        }
-
-        private final byte[] previousDigest;
-        private final List<Transaction> transactions;
-
-        public Block(final byte[] previousDigest, final List<Transaction> transactions) {
-            this.previousDigest = previousDigest;
-            this.transactions = transactions;
-        }
-
-        public void verify() {
-            for (final Transaction t : transactions) {
-                t.verify();
-            }
-        }
-    }
-
-    private static class Transaction {
-        public static class Builder {
-            private final KeyPair source;
-
-            public Builder(final KeyPair source) {
-                this.source = source;
-            }
-
-            public Transaction sign(final byte[] previousDigest) {
-                final byte[] digest = hash(SHA_256_WRITE, previousDigest, source);
-
-                try {
-                    SIGNATURE_WRITE.initSign(source.getPrivate());
-                    SIGNATURE_WRITE.update(digest);
-                    return new Transaction(source, previousDigest, digest, SIGNATURE_WRITE.sign());
-                } catch (final InvalidKeyException | SignatureException e) {
-                    throw new Error(e);
-                }
-            }
-        }
-
-        private final KeyPair source;
-        private final byte[] previousDigest;
-        private final byte[] digest;
-        private final byte[] signature;
-
-        public Transaction(final KeyPair source, final byte[] previousDigest, final byte[] digest, final byte[] signature) {
-            this.source = source;
-            this.digest = digest;
-            this.previousDigest = previousDigest;
-            this.signature = signature;
-        }
-
-        public void verify() {
-            verifyDigest();
-            verifySignature();
-        }
-
-        private void verifyDigest() {
-            final byte[] calculated = hash(SHA_256_READ, previousDigest, source);
-            if (!Arrays.equals(digest, calculated)) {
-                throw new RuntimeException("transaction digest verification failed\nstored: "+
-                    Arrays.toString(digest) +"\ncalculated: "+ Arrays.toString(calculated) +"\n");
-            }
-        }
-
-        private void verifySignature() {
-            try {
-                SIGNATURE_READ.initVerify(source.getPublic());
-                SIGNATURE_READ.update(digest);
-                if (!SIGNATURE_READ.verify(signature)) {
-                    throw new RuntimeException("transaction signature verification failed");
-                }
-            } catch (final InvalidKeyException | SignatureException e) {
-                throw new Error(e);
-            }
-        }
-    }
-    
-    private static byte[] hash(final MessageDigest digest, final byte[] previousDigest, final KeyPair source) {
-        digest.reset();
-        digest.update(previousDigest);
-        digest.update(source.getPublic().getEncoded());
-        return digest.digest();
-    }
-
     private static List<KeyPair> generateKeys(final int n) {
         final ImmutableList.Builder<KeyPair> builder = new ImmutableList.Builder<>();
         for (int i = 0; i < n; ++i) {
@@ -344,20 +213,12 @@ public class BlockChainBenchmark {
         return keys.get((int) Math.round(Math.random() * (keys.size() - 1)));
     }
 
-    private static final MessageDigest SHA_256_WRITE;
-    private static final MessageDigest SHA_256_READ;
     private static final KeyPairGenerator KEYGEN;
-    private static final Signature SIGNATURE_WRITE;
-    private static final Signature SIGNATURE_READ;
 
     static {
         try {
-            SHA_256_WRITE = MessageDigest.getInstance("SHA-256");
-            SHA_256_READ = MessageDigest.getInstance("SHA-256");
             KEYGEN = KeyPairGenerator.getInstance("RSA");
             KEYGEN.initialize(2048);
-            SIGNATURE_WRITE = Signature.getInstance("SHA256WithRSA");
-            SIGNATURE_READ = Signature.getInstance("SHA256WithRSA");
         } catch (final NoSuchAlgorithmException e) {
             throw new Error(e);
         }
