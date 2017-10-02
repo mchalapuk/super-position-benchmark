@@ -39,8 +39,12 @@ public class Block {
     }
 
     public void verify() {
-        for (final Transaction t : transactions) {
-            t.verify();
+        for (int i = 0; i < transactions.size(); ++i) {
+            try {
+                transactions.get(i);
+            } catch (final Throwable t) {
+                throw new RuntimeException("error while verification of " + i + "/" + transactions.size() + " transaction", t);
+            }
         }
     }
 }
