@@ -1,4 +1,4 @@
-group = 'pl.chalapuk.morejuice'
+group = 'pl.chalapuk.superposition'
 version = '0.1'
 
 description = 'Benchmark of SuperPosition utility (state sharing without resource locking in Java).'

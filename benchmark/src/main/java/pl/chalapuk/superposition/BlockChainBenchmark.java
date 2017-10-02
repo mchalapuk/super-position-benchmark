@@ -1,4 +1,4 @@
-package pl.chalapuk.morejuice;
+package pl.chalapuk.superposition;
 
 import com.google.caliper.AfterExperiment;
 import com.google.caliper.BeforeExperiment;
@@ -7,7 +7,6 @@ import com.google.caliper.api.Macrobenchmark;
 import com.google.caliper.api.VmOptions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
-import morejuice.SuperPosition;
 
 import java.security.InvalidKeyException;
 import java.security.KeyPair;
