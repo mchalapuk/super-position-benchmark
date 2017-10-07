@@ -24,9 +24,9 @@ import java.util.List;
 @VmOptions("-XX:-TieredCompilation")
 public class BlockChainBenchmark {
 
-    @Param({"10", "20", "30", "40", "50"})
+    @Param({"1", "2", "3", "5", "7", "11"})
     public int blockSize;
-    @Param({"10", "50", "100"})
+    @Param({"5", "10", "15"})
     public int chainLength;
     @Param
     public Implementation impl;
@@ -158,21 +158,20 @@ public class BlockChainBenchmark {
                     private final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
                     private boolean running = true;
 
+                    private int lastVerifiedBlock = -1;
+
                     @Override
                     public void run() {
-                        while (running && !verify()) {
-                            sleep(10);
+                        while (running) {
+                            reader.read((chain) -> {
+                                chain.verifyBlocksSince(lastVerifiedBlock + 1);
+                                lastVerifiedBlock = chain.length();
+
+                                if (lastVerifiedBlock == chainLength) {
+                                    running = false;
+                                }
+                            });
                         }
-                    }
-
-                    private boolean verify() {
-                        return reader.read((chain) -> {
-                            chain.verifyLastBlock();
-
-                            if (chain.length() == chainLength) {
-                                running = false;
-                            }
-                        });
                     }
                 };
 
@@ -180,7 +179,6 @@ public class BlockChainBenchmark {
 
                 while (signerRunnable != null && verifierRunnable != null) {
                     count += 1;
-                    sleep(10);
                 }
                 return count;
             }
@@ -221,14 +219,6 @@ public class BlockChainBenchmark {
             KEYGEN.initialize(2048);
         } catch (final NoSuchAlgorithmException e) {
             throw new Error(e);
-        }
-    }
-    
-    private static void sleep(final long millis) {
-        try {
-            Thread.sleep(10);
-        } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
     }
 }

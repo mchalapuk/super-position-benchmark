@@ -22,8 +22,18 @@ public class BlockChain {
             throw new IllegalStateException("zero blocks in the chain");
         }
 
+        verifyBlock(blocks.size() - 1);
+    }
+
+    public void verifyBlocksSince(final int blockIndex) {
+        for (int i = blockIndex; i < blocks.size(); ++i) {
+            verifyBlock(i);
+        }
+    }
+
+    public void verifyBlock(final int blockIndex) {
         try {
-            blocks.get(length() - 1).verify();
+            blocks.get(blockIndex).verify();
         } catch (final Throwable t) {
             throw new RuntimeException("error while verification of " + (length() - 1) + " block", t);
         }
