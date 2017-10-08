@@ -51,7 +51,6 @@ public class BlockChainBenchmark {
                         if (isInterrupted()) {
                             return;
                         }
-                        System.out.print(".");
                     }
                     signerRunnable.run();
                     signerRunnable = null;
@@ -91,12 +90,10 @@ public class BlockChainBenchmark {
                 while (chain.length() != chainLength) {
                     while (pendingBlock.size() != blockSize) {
                         pendingBlock.add(transactionStream.next());
-                        System.out.print("+");
                     }
 
                     chain.add(pendingBlock);
                     chain.verifyLastBlock();
-                    System.out.print("@");
 
                     pendingBlock = new Block.Builder(pendingBlock.getLastDigest());
                 }
@@ -137,7 +134,6 @@ public class BlockChainBenchmark {
 
                             mover.move((chain) -> {
                                 chain.add(pendingBlock);
-                                System.out.print("$");
 
                                 if (chain.length() == chainLength) {
                                     running = false;
@@ -156,7 +152,6 @@ public class BlockChainBenchmark {
                             reader.read((chain) -> {
                                 chain.verifyBlocksSince(lastVerifiedBlock + 1);
                                 lastVerifiedBlock = chain.length();
-                                System.out.print("*");
                             });
 
                             if (lastVerifiedBlock > chainLength) {
@@ -170,14 +165,7 @@ public class BlockChainBenchmark {
                     }
                 };
 
-                final Integer integer = verifierRunnable.get();
-
-                while (signerRunnable != null) {
-                    sleep(1);
-                    System.out.print("#");
-                }
-
-                return integer;
+                return verifierRunnable.get();
             }
         };
 
