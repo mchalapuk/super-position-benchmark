@@ -16,6 +16,7 @@ import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * @author Maciej Chałapuk &lt;maciej@chalapuk.pl&gt;
@@ -24,9 +25,9 @@ import java.util.List;
 @VmOptions("-XX:-TieredCompilation")
 public class BlockChainBenchmark {
 
-    @Param({"1", "2", "3", "5", "7", "11"})
+    @Param({"1", "5", "10", "50", "100", "500"})
     public int blockSize;
-    @Param({"5", "10", "15"})
+    @Param({"5"})
     public int chainLength;
     @Param
     public Implementation impl;
@@ -34,10 +35,8 @@ public class BlockChainBenchmark {
     private Iterator<Transaction.Builder> transactionStream;
 
     private static volatile Runnable signerRunnable;
-    private static volatile Runnable verifierRunnable;
 
     private Thread signer;
-    private Thread verifier;
 
     @BeforeExperiment
     public void setUp() throws Exception {
@@ -48,9 +47,11 @@ public class BlockChainBenchmark {
             public void run() {
                 while (true) {
                     while (signerRunnable == null) {
-                        if (this.isInterrupted()) {
+                        BlockChainBenchmark.sleep(10);
+                        if (isInterrupted()) {
                             return;
                         }
+                        System.out.print(".");
                     }
                     signerRunnable.run();
                     signerRunnable = null;
@@ -58,26 +59,13 @@ public class BlockChainBenchmark {
             }
         };
 
-        verifier = new Thread() {
-            public void run() {
-                while (verifierRunnable == null) {
-                    if (this.isInterrupted()) {
-                        return;
-                    }
-                }
-                verifierRunnable.run();
-                verifierRunnable = null;
-            }
-        };
-
         signer.start();
-        verifier.start();
     }
 
     @AfterExperiment
     public void tearDown() throws Exception {
         signer.interrupt();
-        verifier.interrupt();
+        signer.join();
     }
 
     @Macrobenchmark
@@ -103,10 +91,12 @@ public class BlockChainBenchmark {
                 while (chain.length() != chainLength) {
                     while (pendingBlock.size() != blockSize) {
                         pendingBlock.add(transactionStream.next());
+                        System.out.print("+");
                     }
 
                     chain.add(pendingBlock);
                     chain.verifyLastBlock();
+                    System.out.print("@");
 
                     pendingBlock = new Block.Builder(pendingBlock.getLastDigest());
                 }
@@ -124,8 +114,10 @@ public class BlockChainBenchmark {
                 final SuperPosition<BlockChain> theShit = new SuperPosition<>();
                 theShit.initialize(BlockChain::new);
 
+                final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
+                final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
+
                 signerRunnable = new Runnable() {
-                    private final SuperPosition.Mover<BlockChain> mover = theShit.getMover();
                     private boolean running = true;
 
                     private Block.Builder newBlock = new Block.Builder(new byte[] {});
@@ -145,8 +137,9 @@ public class BlockChainBenchmark {
 
                             mover.move((chain) -> {
                                 chain.add(pendingBlock);
+                                System.out.print("$");
 
-                                if (chain.length() + 1 == chainLength) {
+                                if (chain.length() == chainLength) {
                                     running = false;
                                 }
                             });
@@ -154,33 +147,37 @@ public class BlockChainBenchmark {
                     }
                 };
 
-                verifierRunnable = new Runnable() {
-                    private final SuperPosition.Reader<BlockChain> reader = theShit.getReader();
-                    private boolean running = true;
-
+                final Supplier<Integer> verifierRunnable = new Supplier<Integer>() {
                     private int lastVerifiedBlock = -1;
 
                     @Override
-                    public void run() {
-                        while (running) {
+                    public Integer get() {
+                        while (true) {
                             reader.read((chain) -> {
                                 chain.verifyBlocksSince(lastVerifiedBlock + 1);
                                 lastVerifiedBlock = chain.length();
-
-                                if (lastVerifiedBlock == chainLength) {
-                                    running = false;
-                                }
+                                System.out.print("*");
                             });
+
+                            if (lastVerifiedBlock > chainLength) {
+                                throw new Error("lastVerifiedBlock="+ lastVerifiedBlock +" > chainLength="+ chainLength);
+                            }
+                            if (lastVerifiedBlock == chainLength) {
+                                break;
+                            }
                         }
+                        return lastVerifiedBlock;
                     }
                 };
 
-                int count = 0;
+                final Integer integer = verifierRunnable.get();
 
-                while (signerRunnable != null && verifierRunnable != null) {
-                    count += 1;
+                while (signerRunnable != null) {
+                    sleep(1);
+                    System.out.print("#");
                 }
-                return count;
+
+                return integer;
             }
         };
 
@@ -209,6 +206,14 @@ public class BlockChainBenchmark {
 
     private static KeyPair randomKeyPair(final List<KeyPair> keys) {
         return keys.get((int) Math.round(Math.random() * (keys.size() - 1)));
+    }
+
+    private static void sleep(int millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static final KeyPairGenerator KEYGEN;
