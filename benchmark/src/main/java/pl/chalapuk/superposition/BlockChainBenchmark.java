@@ -85,7 +85,7 @@ public class BlockChainBenchmark {
                               final int blockSize,
                               final Iterator<Transaction.Builder> transactionStream) {
                 final BlockChain chain = new BlockChain();
-                Block.Builder pendingBlock = new Block.Builder(new byte[] {});
+                Block.Builder pendingBlock = new Block.Builder(new byte[] {}, new byte[] {});
 
                 while (chain.length() != chainLength) {
                     while (pendingBlock.size() != blockSize) {
@@ -95,7 +95,10 @@ public class BlockChainBenchmark {
                     chain.add(pendingBlock);
                     chain.verifyLastBlock();
 
-                    pendingBlock = new Block.Builder(pendingBlock.getLastDigest());
+                    pendingBlock = new Block.Builder(
+                            pendingBlock.getDigest(),
+                            pendingBlock.getLastTransactionDigest()
+                    );
                 }
 
                 return chain;
@@ -117,7 +120,7 @@ public class BlockChainBenchmark {
                 signerRunnable = new Runnable() {
                     private boolean running = true;
 
-                    private Block.Builder newBlock = new Block.Builder(new byte[] {});
+                    private Block.Builder newBlock = new Block.Builder(new byte[] {}, new byte[] {});
                     private Block.Builder pendingBlock;
 
                     @Override
@@ -129,7 +132,10 @@ public class BlockChainBenchmark {
                                 }
 
                                 pendingBlock = newBlock;
-                                newBlock = new Block.Builder(pendingBlock.getLastDigest());
+                                newBlock = new Block.Builder(
+                                        pendingBlock.getDigest(),
+                                        pendingBlock.getLastTransactionDigest()
+                                );
                             });
 
                             mover.move((chain) -> {
